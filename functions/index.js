@@ -81,6 +81,49 @@ exports.manageUser = functions.https.onCall(async (data, context) => {
   }
 });
 
+// Função para configurar o primeiro CEO. Deve ser usada apenas uma vez.
+exports.setupInitialCEO = functions.https.onCall(async (data, context) => {
+  const {email} = data;
+  if (!email) {
+    throw new functions.https.HttpsError(
+        "invalid-argument",
+        "O email é obrigatório.",
+    );
+  }
+
+  // 1. Verifica se já existe um CEO
+  const listUsersResult = await admin.auth().listUsers(1000);
+  const existingCEO = listUsersResult.users.find(
+      (user) => user.customClaims && user.customClaims.role === "CEO",
+  );
+
+  if (existingCEO) {
+    throw new functions.https.HttpsError(
+        "already-exists",
+        `Um CEO (${existingCEO.email}) já foi configurado. Esta função não pode ser usada novamente.`,
+    );
+  }
+
+  // 2. Encontra o usuário pelo email
+  let userToPromote;
+  try {
+    userToPromote = await admin.auth().getUserByEmail(email);
+  } catch (error) {
+    throw new functions.https.HttpsError("not-found", `Usuário com email ${email} não encontrado. Crie o usuário no painel do Firebase primeiro.`);
+  }
+
+  // 3. Define a claim 'CEO'
+  try {
+    await admin.auth().setCustomUserClaims(userToPromote.uid, {role: "CEO"});
+    return {
+      success: true,
+      message: `O usuário ${email} agora é o CEO. Por favor, faça login novamente.`,
+    };
+  } catch (error) {
+    throw new functions.https.HttpsError("internal", "Erro ao definir a permissão de CEO.");
+  }
+});
+
 // 2. Função para buscar ou criar cliente no Asaas
 exports.handleAsaasCustomer = functions.https.onCall(async (data, context) => {
   // Protegido para ser chamado por Secretaria ou CEO
