@@ -48,6 +48,7 @@
                 <button type="submit" class="w-full bg-cyan-600 text-white py-2 rounded-md hover:bg-cyan-700 transition-colors">Entrar</button>
             </form>
              <p id="login-error" class="text-red-500 text-center mt-4"></p>
+             <p class="text-center mt-4"><a href="#" id="setup-ceo-link" class="text-sm text-blue-600 hover:underline">Configurar primeiro CEO</a></p>
         </div>
 
         <!-- ======================================================================================= -->
@@ -357,6 +358,25 @@
                     console.error("Erro de login:", error);
                     errorP.textContent = 'Usuário ou senha inválidos.';
                 });
+        });
+
+        // --- Lógica para configurar o primeiro CEO ---
+        document.getElementById('setup-ceo-link').addEventListener('click', async (e) => {
+            e.preventDefault();
+            const email = prompt("Por favor, insira o email do usuário que você JÁ CRIOU no painel do Firebase e que será o CEO:");
+            if (!email) {
+                return; // User cancelled the prompt
+            }
+
+            const setupInitialCEO = functions.httpsCallable('setupInitialCEO');
+            try {
+                const result = await setupInitialCEO({ email });
+                alert(result.data.message);
+                // O usuário precisará recarregar e fazer login novamente para que a nova role tenha efeito.
+            } catch (error) {
+                console.error("Erro ao configurar o CEO:", error);
+                alert(`Erro: ${error.message}`);
+            }
         });
 
         // Service Worker
