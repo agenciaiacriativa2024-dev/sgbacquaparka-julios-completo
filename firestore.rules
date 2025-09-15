@@ -1,0 +1,70 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Função para verificar o papel (role) do usuário através de custom claims
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    function getRole() {
+      return request.auth.token.role;
+    }
+    function isCEO() {
+      return isSignedIn() && getRole() == 'CEO';
+    }
+    function isSecretaria() {
+      return isSignedIn() && (getRole() == 'Secretaria' || isCEO());
+    }
+    function isPortaria() {
+      return isSignedIn() && getRole() == 'Portaria';
+    }
+    // Sócio Familiar pode ler seu próprio passaporte
+    function isOwner(passportId) {
+      // O ID do documento do passaporte deve estar ligado ao UID do usuário
+      return isSignedIn() && getRole() == 'SócioFamiliar' && exists(/databases/$(database)/documents/passports/$(passportId)) && resource.data.uid == request.auth.uid;
+    }
+
+    // Coleção de Planos (plans)
+    // Apenas o CEO pode criar, editar e deletar planos.
+    // Todos os usuários autenticados podem ler os planos.
+    match /plans/{planId} {
+      allow read: if isSignedIn();
+      allow write: if isCEO();
+    }
+
+    // Coleção de Passaportes (passports)
+    match /passports/{passportId} {
+      // Leitura: CEO e Secretaria podem ler todos. Sócio Familiar pode ler o seu.
+      allow read: if isSecretaria() || isOwner(passportId);
+      // Criação: Apenas a Secretaria/CEO (através de Cloud Function) pode criar.
+      allow create: if isSecretaria();
+      // Atualização: Secretaria/CEO pode atualizar qualquer um. Sócio pode atualizar o seu.
+      allow update: if isSecretaria() || isOwner(passportId);
+      // Deleção: Apenas CEO/Secretaria pode deletar.
+      allow delete: if isSecretaria();
+
+      // Subcoleção de Carteirinhas (cards)
+      match /cards/{cardId} {
+        // Leitura: Secretaria/CEO, o dono do passaporte, e a Portaria podem ler.
+        allow read: if isSecretaria() || isOwner(passportId) || isPortaria();
+        // Escrita (Criar/Atualizar): Secretaria/CEO e o dono do passaporte podem adicionar/editar.
+        allow write: if isSecretaria() || isOwner(passportId);
+        // Deleção: Apenas Secretaria/CEO pode deletar.
+        allow delete: if isSecretaria();
+      }
+    }
+
+    // Coleção de Logs de Acesso (access_logs)
+    // Apenas a Portaria pode criar logs de acesso. Ninguém pode ler/modificar depois.
+    match /access_logs/{logId} {
+      allow read, update, delete: if false;
+      allow create: if isPortaria();
+    }
+
+    // Coleção para armazenar papéis, se necessário (gerenciada por functions)
+    // Apenas o CEO (via functions) pode ler e escrever.
+    match /users_roles/{userId} {
+       allow read, write: if isCEO();
+    }
+  }
+}
