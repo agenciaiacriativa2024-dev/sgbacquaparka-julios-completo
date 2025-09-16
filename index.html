@@ -136,6 +136,26 @@
                 <input type="tel" id="resp-telefone" placeholder="Telefone" required class="w-full p-2 border rounded">
                 <input type="text" id="resp-endereco" placeholder="Endereço Completo" required class="w-full p-2 border rounded">
                 <select id="resp-plano" required class="w-full p-2 border rounded bg-white"></select>
+
+                <div class="p-3 border rounded-lg">
+                    <p class="font-medium text-gray-700 mb-2">Passaporte Novo?</p>
+                    <div class="flex items-center gap-x-6">
+                        <div class="flex items-center">
+                            <input id="passaporte-novo-sim" name="passaporte-novo" type="radio" value="sim" checked class="h-4 w-4 border-gray-300 text-cyan-600 focus:ring-cyan-600">
+                            <label for="passaporte-novo-sim" class="ml-2 block text-sm font-medium leading-6 text-gray-900">Sim</label>
+                        </div>
+                        <div class="flex items-center">
+                            <input id="passaporte-novo-nao" name="passaporte-novo" type="radio" value="nao" class="h-4 w-4 border-gray-300 text-cyan-600 focus:ring-cyan-600">
+                            <label for="passaporte-novo-nao" class="ml-2 block text-sm font-medium leading-6 text-gray-900">Não</label>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="campos-passaporte-antigo" class="hidden space-y-3 pt-3 border-t mt-3">
+                    <input type="text" id="tipo-passaporte-antigo" placeholder="Tipo de Passaporte Antigo" class="w-full p-2 border rounded">
+                    <input type="text" id="numero-passaporte-antigo" placeholder="Número do Passaporte Antigo" class="w-full p-2 border rounded">
+                </div>
+
                 <button type="submit" class="w-full bg-green-600 text-white p-3 rounded-md hover:bg-green-700">Criar Passaporte e Cliente</button>
             </form>
         </div>
@@ -412,12 +432,59 @@
         });
 
         async function loadUsers() {
-            // Esta é uma implementação SIMPLIFICADA.
-            // O ideal seria ter uma coleção 'users' no Firestore para listar.
-            // Como o enunciado não pede, vamos apenas exibir uma mensagem.
-            // Para uma implementação real, a Cloud Function 'manageUser' ao criar um usuário
-            // também criaria um doc em uma coleção 'users' com o email e o role.
-            document.getElementById('lista-usuarios').innerHTML = `<p class="text-gray-500">A listagem de usuários requer uma coleção 'users' no Firestore, que não foi especificada no escopo inicial. A funcionalidade de criar e deletar via Cloud Function está implementada.</p>`;
+            const listaUsuariosDiv = document.getElementById('lista-usuarios');
+            listaUsuariosDiv.innerHTML = '<p>Carregando usuários...</p>';
+            try {
+                const snapshot = await db.collection('users').orderBy('email').get();
+                if (snapshot.empty) {
+                    listaUsuariosDiv.innerHTML = '<p>Nenhum usuário encontrado.</p>';
+                    return;
+                }
+
+                let html = '<div class="space-y-2">';
+                snapshot.forEach(doc => {
+                    const user = doc.data();
+                    // Não listar o próprio CEO para evitar auto-exclusão acidental pela UI
+                    if (user.uid === currentUserData.uid) {
+                        return;
+                    }
+
+                    html += `
+                        <div class="bg-white p-3 rounded-lg shadow-sm flex justify-between items-center">
+                            <div>
+                                <p class="font-bold">${user.email}</p>
+                                <p class="text-sm text-gray-600">Papel: ${user.role}</p>
+                            </div>
+                            <button onclick="deleteUser('${user.uid}', '${user.email}')" class="text-red-500 hover:text-red-700 p-2 rounded-full hover:bg-red-100" title="Excluir usuário">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                  <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                </svg>
+                            </button>
+                        </div>
+                    `;
+                });
+                html += '</div>';
+                listaUsuariosDiv.innerHTML = html;
+            } catch (error) {
+                console.error("Erro ao carregar usuários:", error);
+                listaUsuariosDiv.innerHTML = '<p class="text-red-500">Erro ao carregar usuários.</p>';
+            }
+        }
+
+        async function deleteUser(uid, email) {
+            if (!confirm(`Tem certeza que deseja excluir o usuário ${email}? Esta ação não pode ser desfeita.`)) {
+                return;
+            }
+
+            const manageUser = functions.httpsCallable('manageUser');
+            try {
+                const result = await manageUser({ action: 'delete', uid: uid });
+                alert(result.data.message);
+                loadUsers(); // Recarrega a lista
+            } catch (error) {
+                console.error("Erro ao deletar usuário:", error);
+                alert(`Erro: ${error.message}`);
+            }
         }
 
         // --- Gerenciar Planos ---
@@ -543,6 +610,19 @@
 
         // --- Criar Passaporte ---
         const formCriarPassaporte = document.getElementById('form-criar-passaporte');
+
+        // Lógica para mostrar/esconder campos de passaporte antigo
+        document.querySelectorAll('input[name="passaporte-novo"]').forEach(radio => {
+            radio.addEventListener('change', (e) => {
+                const camposAntigos = document.getElementById('campos-passaporte-antigo');
+                if (e.target.value === 'nao') {
+                    camposAntigos.classList.remove('hidden');
+                } else {
+                    camposAntigos.classList.add('hidden');
+                }
+            });
+        });
+
         formCriarPassaporte.addEventListener('submit', async (e) => {
             e.preventDefault();
             const nome = document.getElementById('resp-nome').value;
@@ -550,7 +630,19 @@
             const email = document.getElementById('resp-email').value;
             const planoId = document.getElementById('resp-plano').value;
 
-            // 1. Chamar function para criar/buscar cliente Asaas
+            // 1. Gerar número do passaporte ANTES de qualquer outra coisa
+            const generatePassportNumber = functions.httpsCallable('generatePassportNumber');
+            let newPassportNumber;
+            try {
+                const result = await generatePassportNumber();
+                newPassportNumber = result.data.passportNumber;
+            } catch (error) {
+                console.error("Erro ao gerar número do passaporte:", error);
+                alert(`Erro crítico: Não foi possível gerar um número de passaporte. A criação foi cancelada. Detalhes: ${error.message}`);
+                return;
+            }
+
+            // 2. Chamar function para criar/buscar cliente Asaas
             const handleAsaasCustomer = functions.httpsCallable('handleAsaasCustomer');
             let asaasCustomerId;
             try {
@@ -568,33 +660,24 @@
                 return;
             }
 
-            // 2. Chamar function para criar usuário no Firebase Auth
+            // 3. Chamar function para criar usuário no Firebase Auth
             const manageUser = functions.httpsCallable('manageUser');
-            let userUid;
             try {
                 const result = await manageUser({ action: 'create', email, role: 'SócioFamiliar' });
-                const user = await auth.getUserByEmail(email); // Esta linha não funciona no cliente
-                // No cliente, não temos acesso direto ao UID após criação pela function.
-                // A function deveria retornar o UID. Vamos assumir que sim por agora.
-                // UMA SOLUÇÃO MELHOR: a function que cria o usuário também cria o passaporte.
-                // Mas seguindo o enunciado, vamos fazer em 2 passos.
                 alert(result.data.message);
-                // A forma de obter o UID aqui é um desafio. Vamos buscar o usuário pelo email.
-                // Isso não é ideal e requer regras de segurança específicas.
-                // Para simplificar, vamos salvar o passaporte sem o UID por enquanto.
-                // O SócioFamiliar, ao logar, terá seu passaporte associado.
+                // O UID será associado ao passaporte no primeiro login do sócio.
             } catch (error) {
                 console.error("Erro ao criar usuário SócioFamiliar:", error);
                 alert(`Erro ao criar usuário: ${error.message}`);
-                // Não continuar se o usuário não for criado
                  if (!error.message.includes("already exists")) {
-                    return;
+                    return; // Não continuar se o usuário não for criado e não for um erro de "já existe"
                 }
             }
 
-            // 3. Salvar passaporte no Firestore
+            // 4. Salvar passaporte no Firestore
             try {
                  const passaporteData = {
+                    numeroPassaporte: newPassportNumber,
                     responsavel: {
                         nome: nome,
                         cpf: cpf,
@@ -606,11 +689,17 @@
                     planoId: planoId,
                     asaasCustomerId: asaasCustomerId,
                     createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-                    // uid será associado no primeiro login do sócio.
+                    status: 'Ativo', // Adicionando um status inicial
+                    isNewPassport: document.getElementById('passaporte-novo-sim').checked,
+                    oldPassportInfo: {
+                        type: document.getElementById('passaporte-novo-nao').checked ? document.getElementById('tipo-passaporte-antigo').value : null,
+                        number: document.getElementById('passaporte-novo-nao').checked ? document.getElementById('numero-passaporte-antigo').value : null,
+                    }
                 };
                 const docRef = await db.collection('passports').add(passaporteData);
-                alert(`Passaporte #${docRef.id} criado com sucesso!`);
+                alert(`Passaporte #${newPassportNumber} criado com sucesso!`);
                 formCriarPassaporte.reset();
+                document.getElementById('campos-passaporte-antigo').classList.add('hidden'); // Esconde os campos de volta
                 navigateTo('tela-gerenciar-passaportes');
                 loadPassaportes();
             } catch (error) {
