@@ -3,6 +3,7 @@ const admin = require("firebase-admin");
 const axios = require("axios");
 
 admin.initializeApp();
+const db = admin.firestore();
 
 // Configure a chave da API do Asaas aqui.
 // É uma boa prática usar secrets do Firebase: functions.config().asaas.key
@@ -50,6 +51,14 @@ exports.manageUser = functions.https.onCall(async (data, context) => {
     try {
       const userRecord = await admin.auth().createUser({email});
       await admin.auth().setCustomUserClaims(userRecord.uid, {role: role});
+
+      // Salva o usuário na coleção 'users' do Firestore
+      await db.collection("users").doc(userRecord.uid).set({
+        uid: userRecord.uid,
+        email: email,
+        role: role,
+      });
+
       // Enviar link de redefinição de senha
       const link = await admin.auth().generatePasswordResetLink(email);
       // Aqui você poderia integrar com um serviço de email para enviar o link.
@@ -60,6 +69,7 @@ exports.manageUser = functions.https.onCall(async (data, context) => {
         passwordResetLink: link,
       };
     } catch (error) {
+      // Se a criação do usuário falhar, o Firestore não será escrito.
       throw new functions.https.HttpsError("internal", error.message);
     }
   } else if (action === "delete") {
@@ -69,9 +79,16 @@ exports.manageUser = functions.https.onCall(async (data, context) => {
       );
     }
     try {
+      // Primeiro deleta do Auth
       await admin.auth().deleteUser(uid);
+      // Depois deleta do Firestore
+      await db.collection("users").doc(uid).delete();
+
       return {success: true, message: `Usuário ${uid} deletado.`};
     } catch (error) {
+      // Se a exclusão do Auth falhar, a exclusão do Firestore não será tentada.
+      // Se a exclusão do Auth for bem-sucedida, mas a do Firestore falhar,
+      // teremos um documento órfão no Firestore.
       throw new functions.https.HttpsError("internal", error.message);
     }
   } else {
@@ -200,6 +217,46 @@ exports.getFinancialStatus = functions.https.onCall(async (data, context) => {
     throw new functions.https.HttpsError(
         "internal",
         error.response ? error.response.data : error.message,
+    );
+  }
+});
+
+// 4. Função para gerar um número de passaporte sequencial
+exports.generatePassportNumber = functions.https.onCall(async (data, context) => {
+  // Protegido para ser chamado por Secretaria ou CEO
+  if (!context.auth || !["CEO", "Secretaria"].includes(context.auth.token.role)) {
+    throw new functions.https.HttpsError(
+        "permission-denied", "Permissão negada.",
+    );
+  }
+
+  const counterRef = db.collection("counters").doc("passports");
+
+  try {
+    let newNumber;
+    await db.runTransaction(async (transaction) => {
+      const counterDoc = await transaction.get(counterRef);
+
+      let currentNumber = 0;
+      if (counterDoc.exists) {
+        currentNumber = counterDoc.data().currentNumber;
+      }
+
+      newNumber = currentNumber + 1;
+
+      transaction.set(counterRef, { currentNumber: newNumber }, { merge: true });
+    });
+
+    const formattedNumber = String(newNumber).padStart(7, "0");
+
+    return { success: true, passportNumber: formattedNumber };
+
+  } catch (error) {
+    console.error("Erro ao gerar número do passaporte:", error);
+    throw new functions.https.HttpsError(
+        "internal",
+        "Não foi possível gerar um novo número de passaporte.",
+        error,
     );
   }
 });
